@@ -1,0 +1,3 @@
+Enter = end turn
+Space = step
+P = pause
