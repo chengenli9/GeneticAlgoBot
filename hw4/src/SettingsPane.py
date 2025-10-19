@@ -230,7 +230,7 @@ class GameSettingsFrame ( ) :
         more_settings [ "timeout_limit" ] = self.additionalOptionsFrame.public_timeout
         if more_settings [ "timeout" ] :
             # convert n to integer
-            rgx_float = re.compile ( "^[0-9]+(\.[0-9]+)?$" )
+            rgx_float = re.compile ( "^[0-9]+(\\.?[0-9]+)?$" )
             if not rgx_float.match(more_settings [ "timeout_limit" ]) :
                 title = "Error: Additional Settings"
                 message = "Games could not be started.\nError: Invalid timeout"
@@ -336,8 +336,8 @@ class GameSettingsFrame ( ) :
                 t = "Round Robin"
         
         # convert n to integer
-        rgx_int = re.compile ( "^[0-9]+$" )
-        if not rgx_int.match(n) :
+        rgx_float = re.compile ( "^[0-9]+(\\.?[0-9]+)?$" )
+        if not rgx_float.match(n) :
             title = "Error: Game Addition"
             message = "No game added.\nError: Invalid number of games: {}".format(n)
             wgt.ShowError( title, message, self.handler.root )
