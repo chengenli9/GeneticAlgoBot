@@ -60,7 +60,7 @@ class AIPlayer(Player):
     DISTANCE_PENALTY_BONUS = 1
     
     # Genetic Algorithm constants
-    POPULATION_SIZE = 20
+    POPULATION_SIZE = 50
     GAMES_PER_GENE = 15  # Increased for better evaluation
     MUTATION_RATE = 0.15  # Increased for more exploration
     GENE_LENGTH = 12
@@ -91,7 +91,7 @@ class AIPlayer(Player):
     # Simple genetic algorithm methods
     def _initPopulation(self):
         """Initialize population from file or create random"""
-        filename = "./nguyenj25_population.txt"
+        filename = "./lic27_nguyenj25_population.txt"
         if os.path.exists(filename):
             try:
                 with open(filename, 'r') as f:
@@ -127,13 +127,24 @@ class AIPlayer(Player):
             self.population = [[random.uniform(-10, 10) for _ in range(self.GENE_LENGTH)] for _ in range(self.POPULATION_SIZE)]
         self.fitnessScores = [0.0] * len(self.population)
     
+    ##
+    # mateGenes
+    # Description: Mates two parent genes to produce two child genes, should include a chance of mutation.Use python slices for crossover.
     def mateGenes(self, parent1, parent2):
         """Simple crossover and mutation"""
         child1, child2 = parent1[:], parent2[:]
-        for i in range(self.GENE_LENGTH):
-            if random.random() < 0.5:
-                child1[i], child2[i] = child2[i], child1[i]
+        crossover_point = random.randint(1, self.GENE_LENGTH - 1)
+        child1 = parent1[:crossover_point] + parent2[crossover_point:]
+        child2 = parent2[:crossover_point] + parent1[crossover_point:]
         return self._mutate(child1), self._mutate(child2)
+
+
+
+
+        # for i in range(self.GENE_LENGTH):
+        #     if random.random() < 0.5:
+        #         child1[i], child2[i] = child2[i], child1[i]
+        # return self._mutate(child1), self._mutate(child2)
     
     def _mutate(self, gene):
         """Simple mutation"""
@@ -158,7 +169,7 @@ class AIPlayer(Player):
         self.gamesPlayedWithCurrentGene = 0
         self.winsWithCurrentGene = 0
         # Save in clean, readable format
-        with open("./nguyenj25_population.txt", 'w') as f:
+        with open("./lic27_nguyenj25_population.txt", 'w') as f:
             f.write("# Genetic Algorithm Population\n")
             f.write("# Format: Each line represents one gene with 12 feature weights\n")
             f.write("# Features: Food_diff, Queen_health_diff, Drone_diff, Soldier_diff, Worker_diff, Ranged_diff, Offensive_cap, Dist_enemy_queen, Dist_my_queen, Dist_enemy_anthill, Worker_queen_dist, Queen_queen_dist\n")
