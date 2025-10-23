@@ -650,7 +650,7 @@ class AIPlayer(Player):
     #
     # Return: A utility score representing state favorability
     ##
-    def calculateStateUtility(self, parentState, currentState):
+    def calculateStateUtility(self, currentState):
         """Use genetic algorithm utility instead of heuristic"""
         if not self.population or self.currentGeneIndex >= len(self.population):
             return 0.0
@@ -885,39 +885,29 @@ class AIPlayer(Player):
     # Return: The Move to be made
     ##
     def getMove(self, currentState):
-        # Capture our in-game index once
-        if self.myIndex is None:
-            self.myIndex = currentState.whoseTurn
-
-        # Create root node
-        root = self.buildSearchNode(move=None, parentNode=None, currentState=currentState)
+        moves = listAllLegalMoves(currentState)
+        nodes = []
         
-        # Perform minimax search
-        val, bestNode = self.performMinimaxSearch(
-            currentNode=root,
-            searchDepth=self.SEARCH_DEPTH,
-            pruningRatio=self.PRUNING_RATIO,
-            alpha=-float('inf'),
-            beta=float('inf')
-        )
+        for move in moves:
+            nextState = getNextState(currentState, move)
+            utilityScore = self.calculateStateUtility(nextState)
+            node = self.node(move, nextState, utilityScore, None)
+            nodes.append(node)
+        
+        best = self.bestMove(nodes)
+        return best["move"]
 
-        return bestNode['move']
-
-
-def unitTest() -> None:
-    test_state: GameState = GameState.getBasicState()
-    test_player: AIPlayer = AIPlayer(0)
+    ## Node representation
+    #
+    def node(self, move, state, utility, parent, depth=1):
+        return {
+            "move": move,
+            "state": state,
+            "evaluation": (utility + depth),
+            "parent": parent
+        }
     
-    move: Move = test_player.getMove(test_state)
-    next_state: GameState = getNextState(test_state, move)
-    # utility_value: float = test_player.utility(test_state, next_state)
+    def bestMove(self, nodes):
+        return max(nodes, key=lambda x: x["evaluation"])
 
-    if type(move) is not Move:
-        print("getMove() test failed; invalid move returned")
-
-    # if type(utility_value) is not int:
-    #     print(f"utility() failed; value should be an integer: {utility_value}")
-
-if __name__ == "__main__":
-    unitTest()
 
