@@ -1,5 +1,6 @@
-# Authors: Chengen Li, James Nguyen
-# HW4: Genetic Algorithm Bot
+#CS 421 HW3
+#Authors: Chengen Li, James Nguyen
+
 
 import random
 import sys
@@ -61,7 +62,7 @@ class AIPlayer(Player):
     
     # Genetic Algorithm constants
     POPULATION_SIZE = 50
-    GAMES_PER_GENE = 15  # Increased for better evaluation
+    GAMES_PER_GENE = 5  # Faster evaluation for more generations
     MUTATION_RATE = 0.15  # Increased for more exploration
     GENE_LENGTH = 12
 
@@ -84,6 +85,8 @@ class AIPlayer(Player):
         self.fitnessScores = []
         self.gamesPlayedWithCurrentGene = 0
         self.winsWithCurrentGene = 0
+        self.generation = 0  # Track current generation
+        self.totalGamesPlayed = 0  # Track total games for population updates
         
         # Initialize population
         self._initPopulation()
@@ -127,24 +130,13 @@ class AIPlayer(Player):
             self.population = [[random.uniform(-10, 10) for _ in range(self.GENE_LENGTH)] for _ in range(self.POPULATION_SIZE)]
         self.fitnessScores = [0.0] * len(self.population)
     
-    ##
-    # mateGenes
-    # Description: Mates two parent genes to produce two child genes, should include a chance of mutation.Use python slices for crossover.
     def mateGenes(self, parent1, parent2):
         """Simple crossover and mutation"""
         child1, child2 = parent1[:], parent2[:]
-        crossover_point = random.randint(1, self.GENE_LENGTH - 1)
-        child1 = parent1[:crossover_point] + parent2[crossover_point:]
-        child2 = parent2[:crossover_point] + parent1[crossover_point:]
+        for i in range(self.GENE_LENGTH):
+            if random.random() < 0.5:
+                child1[i], child2[i] = child2[i], child1[i]
         return self._mutate(child1), self._mutate(child2)
-
-
-
-
-        # for i in range(self.GENE_LENGTH):
-        #     if random.random() < 0.5:
-        #         child1[i], child2[i] = child2[i], child1[i]
-        # return self._mutate(child1), self._mutate(child2)
     
     def _mutate(self, gene):
         """Simple mutation"""
@@ -154,31 +146,46 @@ class AIPlayer(Player):
                 gene[i] = max(-10, min(10, gene[i]))
         return gene
     
-    def createNextGeneration(self):
-        """Create next generation using top 50%"""
-        sorted_pop = sorted(zip(self.fitnessScores, self.population), reverse=True)
-        elite = [gene for _, gene in sorted_pop[:self.POPULATION_SIZE//2]]
-        new_pop = elite[:]
-        while len(new_pop) < self.POPULATION_SIZE:
-            p1, p2 = random.choice(elite), random.choice(elite)
-            c1, c2 = self.mateGenes(p1, p2)
-            new_pop.extend([c1, c2])
-        self.population = new_pop[:self.POPULATION_SIZE]
-        self.fitnessScores = [0.0] * len(self.population)
-        self.currentGeneIndex = 0
-        self.gamesPlayedWithCurrentGene = 0
-        self.winsWithCurrentGene = 0
-        # Save in clean, readable format
+    def _updatePopulationFile(self):
+        """Update population file with current state"""
+        print(f"\n--- UPDATING POPULATION FILE (Games played: {self.totalGamesPlayed}) ---")
+        
         with open("./lic27_nguyenj25_population.txt", 'w') as f:
             f.write("# Genetic Algorithm Population\n")
             f.write("# Format: Each line represents one gene with 12 feature weights\n")
             f.write("# Features: Food_diff, Queen_health_diff, Drone_diff, Soldier_diff, Worker_diff, Ranged_diff, Offensive_cap, Dist_enemy_queen, Dist_my_queen, Dist_enemy_anthill, Worker_queen_dist, Queen_queen_dist\n")
-            f.write(f"# Population size: {len(self.population)}, Gene length: {len(self.population[0])}\n\n")
+            f.write(f"# Population size: {len(self.population)}, Gene length: {len(self.population[0])}, Generation: {self.generation}\n")
+            f.write(f"# Total games played: {self.totalGamesPlayed}, Current gene: {self.currentGeneIndex}\n\n")
             
             for i, gene in enumerate(self.population):
                 # Format each gene on one line with clean spacing
                 gene_str = " ".join([f"{weight:8.4f}" for weight in gene])
                 f.write(f"Gene_{i:2d}: {gene_str}\n")
+    
+    def createNextGeneration(self):
+        """Create next generation using top 50%"""
+        sorted_pop = sorted(zip(self.fitnessScores, self.population), reverse=True)
+        elite = [gene for _, gene in sorted_pop[:self.POPULATION_SIZE//2]]  # Top 25 genes
+        new_pop = elite[:]
+        while len(new_pop) < self.POPULATION_SIZE:
+            p1, p2 = random.choice(elite), random.choice(elite)
+            c1, c2 = self.mateGenes(p1, p2)
+            new_pop.extend([c1, c2])
+        # Print generation statistics BEFORE resetting fitness scores
+        print(f"\n=== GENERATION {self.generation + 1} COMPLETED ===")
+        print(f"Best fitness: {max(self.fitnessScores):.3f}")
+        print(f"Average fitness: {sum(self.fitnessScores)/len(self.fitnessScores):.3f}")
+        print(f"Worst fitness: {min(self.fitnessScores):.3f}")
+        
+        self.population = new_pop[:self.POPULATION_SIZE]
+        self.fitnessScores = [0.0] * len(self.population)
+        self.currentGeneIndex = 0
+        self.gamesPlayedWithCurrentGene = 0
+        self.winsWithCurrentGene = 0
+        self.generation += 1  # Increment generation counter
+        
+        # Update population file
+        self._updatePopulationFile()
     
     ##
     #getPlacement
@@ -252,13 +259,22 @@ class AIPlayer(Player):
         if hasWon:
             self.winsWithCurrentGene += 1
         self.gamesPlayedWithCurrentGene += 1
+        self.totalGamesPlayed += 1
         
         if self.gamesPlayedWithCurrentGene >= self.GAMES_PER_GENE:
             fitness = self.winsWithCurrentGene / self.gamesPlayedWithCurrentGene
             self.fitnessScores[self.currentGeneIndex] = fitness
+            
+            # Print gene completion status
+            print(f"Gene {self.currentGeneIndex:2d} completed: {self.winsWithCurrentGene}/{self.gamesPlayedWithCurrentGene} wins (fitness: {fitness:.3f})")
+            
             self.currentGeneIndex += 1
             self.gamesPlayedWithCurrentGene = 0
             self.winsWithCurrentGene = 0
+            
+            # Update population file every 250 games
+            if self.totalGamesPlayed % 250 == 0:
+                self._updatePopulationFile()
             
             if self.currentGeneIndex >= len(self.population):
                 self.createNextGeneration()
@@ -904,3 +920,4 @@ def unitTest() -> None:
 
 if __name__ == "__main__":
     unitTest()
+
