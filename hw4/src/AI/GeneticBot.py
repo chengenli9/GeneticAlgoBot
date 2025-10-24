@@ -1,5 +1,5 @@
-# Authors: Chengen Li, James Nguyen
-# HW4: Genetic Algorithm Bot
+#CS 421 HW4 Genetic Algorithm Player
+#Authors: Chengen Li, James Nguyen
 
 import random
 import sys
@@ -8,15 +8,12 @@ import os
 import json
 sys.path.append("..")  #so other modules can be found in parent dir
 from Player import *
-# from Constants import PLAYER_ONE, PLAYER_TWO
 import Constants
 from Construction import CONSTR_STATS
 from Ant import UNIT_STATS
 from Move import Move
 from GameState import *
 from AIPlayerUtils import *
-# type alias for a coordinate position
-Position = tuple[int, int]
 
 
 ##
@@ -30,38 +27,9 @@ Position = tuple[int, int]
 ##
 class AIPlayer(Player):
     
-    # Strategic evaluation constants
-    BASE_SCORE = 50000
-    PENALTY_MULTIPLIER = 2.5
-    
-    # Food collection constants
-    FOOD_BASE_COST = 1500
-    FOOD_WORKER_BONUS = 800
-    FOOD_WORKER_PENALTY = 120000
-    FOOD_DEFICIT_MULTIPLIER = 3
-    
-    # Attack strategy constants
-    ATTACK_BASE_EVALUATION = 1200
-    DRONE_BONUS = 500
-    RANGED_SOLDIER_BONUS = 600
-    WORKER_ELIMINATION_BONUS = 300
-    MILITARY_UNIT_PENALTY = 100000
-    
-    # Queen positioning constants
-    QUEEN_MISSING_PENALTY = 15000
-    QUEEN_BLOCKING_PENALTY = 12000
-    QUEEN_IDEAL_POSITION = (2, 1)
-    
-    # Minimax search constants
-    SEARCH_DEPTH = 3
-    PRUNING_RATIO = 0.15
-    MIN_NODE_LIMIT = 15
-    DISTANCE_PENALTY_THRESHOLD = 3
-    DISTANCE_PENALTY_BONUS = 1
-    
     # Genetic Algorithm constants
-    POPULATION_SIZE = 20
-    GAMES_PER_GENE = 15  # Increased for better evaluation
+    POPULATION_SIZE = 50
+    GAMES_PER_GENE = 5  # Faster evaluation for more generations
     MUTATION_RATE = 0.15  # Increased for more exploration
     GENE_LENGTH = 12
 
@@ -84,16 +52,28 @@ class AIPlayer(Player):
         self.fitnessScores = []
         self.gamesPlayedWithCurrentGene = 0
         self.winsWithCurrentGene = 0
+        self.generation = 0  # Track current generation
+        self.totalGamesPlayed = 0  # Track total games for population updates
+        self.totalWins = 0  # Track total wins across all generations
         
         # Initialize population
         self._initPopulation()
     
-    # Simple genetic algorithm methods
+    ##
+    # _initPopulation
+    #
+    # Initializes the genetic algorithm population by loading from file or creating random genes
+    # Attempts multiple file formats for backward compatibility
+    #
+    # Parameters: None
+    #
+    # Return: None (sets self.population and self.fitnessScores)
+    ##
     def _initPopulation(self):
-        """Initialize population from file or create random"""
-        filename = "./nguyenj25_population.txt"
+        filename = "./lic27_nguyenj25_population.txt"
         if os.path.exists(filename):
             try:
+                # Try primary format: Gene_XX: weight1 weight2 ...
                 with open(filename, 'r') as f:
                     self.population = []
                     for line in f:
@@ -113,7 +93,7 @@ class AIPlayer(Player):
                     with open(filename, 'r') as f:
                         self.population = json.load(f)
                 except:
-                    # Try Reiss format (one gene per line)
+                    # Try comma-separated format (one gene per line)
                     try:
                         with open(filename, 'r') as f:
                             self.population = []
@@ -122,52 +102,129 @@ class AIPlayer(Player):
                                     gene = [float(x) for x in line.strip().split(',')]
                                     self.population.append(gene)
                     except:
+                        # Create random population if all file formats fail
                         self.population = [[random.uniform(-10, 10) for _ in range(self.GENE_LENGTH)] for _ in range(self.POPULATION_SIZE)]
         else:
+            # No file exists, create random population
             self.population = [[random.uniform(-10, 10) for _ in range(self.GENE_LENGTH)] for _ in range(self.POPULATION_SIZE)]
         self.fitnessScores = [0.0] * len(self.population)
     
+    ##
+    # mateGenes
+    #
+    # Performs crossover and mutation on two parent genes to create two children
+    # Uses uniform crossover (50% chance to swap each gene position)
+    #
+    # Parameters:
+    #   parent1 - First parent gene (list of floats)
+    #   parent2 - Second parent gene (list of floats)
+    #
+    # Return: Tuple of (child1, child2) after crossover and mutation
+    ##
     def mateGenes(self, parent1, parent2):
-        """Simple crossover and mutation"""
+        # Create copies to avoid modifying originals
         child1, child2 = parent1[:], parent2[:]
-        for i in range(self.GENE_LENGTH):
-            if random.random() < 0.5:
-                child1[i], child2[i] = child2[i], child1[i]
+        
+        # Generate random crossover mask (no loops)
+        crossover_mask = [random.random() < 0.5 for _ in range(self.GENE_LENGTH)]
+        
+        # Apply crossover using vectorized operations (no explicit loops)
+        child1 = [child2[i] if mask else child1[i] for i, mask in enumerate(crossover_mask)]
+        child2 = [child1[i] if mask else child2[i] for i, mask in enumerate(crossover_mask)]
+        
         return self._mutate(child1), self._mutate(child2)
     
+    ##
+    # _mutate
+    #
+    # Applies Gaussian mutation to a gene with probability MUTATION_RATE
+    # Clamps mutated values to [-10, 10] range
+    #
+    # Parameters:
+    #   gene - Gene to mutate (list of floats)
+    #
+    # Return: Mutated gene (list of floats)
+    ##
     def _mutate(self, gene):
-        """Simple mutation"""
+        # Apply mutation to each gene position
         for i in range(len(gene)):
             if random.random() < self.MUTATION_RATE:
+                # Add Gaussian noise with std dev 0.5
                 gene[i] += random.gauss(0, 0.5)
+                # Clamp to valid range
                 gene[i] = max(-10, min(10, gene[i]))
         return gene
     
+    ##
+    # _updatePopulationFile
+    #
+    # Writes current population state to file with metadata and statistics
+    # Includes generation info, game counts, and formatted gene weights
+    #
+    # Parameters: None
+    #
+    # Return: None (writes to file)
+    ##
+    def _updatePopulationFile(self):
+        print(f"\n--- UPDATING POPULATION FILE (Games played: {self.totalGamesPlayed}) ---")
+        
+        # Calculate overall win rate using tracked total wins
+        overall_win_rate = self.totalWins / self.totalGamesPlayed if self.totalGamesPlayed > 0 else 0.0
+        
+        with open("./lic27_nguyenj25_population.txt", 'w') as f:
+            # Write header information
+            f.write("# Genetic Algorithm Population\n")
+            f.write("# Format: Each line represents one gene with 12 feature weights\n")
+            f.write("# Features: Food_diff, Queen_health_diff, Drone_diff, Soldier_diff, Worker_diff, Ranged_diff, Offensive_cap, Dist_enemy_queen, Dist_my_queen, Dist_enemy_anthill, Worker_queen_dist, Queen_queen_dist\n")
+            f.write(f"# Population size: {len(self.population)}, Gene length: {len(self.population[0])}, Generation: {self.generation}\n")
+            f.write(f"# Total games played: {self.totalGamesPlayed}\n")
+            f.write(f"# Overall win rate: {overall_win_rate:.3f} ({self.totalWins}/{self.totalGamesPlayed})\n\n")
+            
+            # Write each gene with formatted weights
+            for i, gene in enumerate(self.population):
+                gene_str = " ".join([f"{weight:8.4f}" for weight in gene])
+                f.write(f"Gene_{i:2d}: {gene_str}\n")
+    
+    ##
+    # createNextGeneration
+    #
+    # Creates next generation using elitist selection (top 50% survive)
+    # Elite genes are used to create offspring through crossover and mutation
+    # Resets fitness scores and generation counters
+    #
+    # Parameters: None
+    #
+    # Return: None (updates self.population and related variables)
+    ##
     def createNextGeneration(self):
-        """Create next generation using top 50%"""
+        # Sort population by fitness (descending)
         sorted_pop = sorted(zip(self.fitnessScores, self.population), reverse=True)
+        # Select top 50% as elite
         elite = [gene for _, gene in sorted_pop[:self.POPULATION_SIZE//2]]
         new_pop = elite[:]
+        
+        # Generate offspring until population is full
         while len(new_pop) < self.POPULATION_SIZE:
             p1, p2 = random.choice(elite), random.choice(elite)
             c1, c2 = self.mateGenes(p1, p2)
             new_pop.extend([c1, c2])
+        
+        # Print generation statistics BEFORE resetting fitness scores
+        print(f"\n=== GENERATION {self.generation + 1} COMPLETED ===")
+        print(f"Best fitness: {max(self.fitnessScores):.3f}")
+        print(f"Average fitness: {sum(self.fitnessScores)/len(self.fitnessScores):.3f}")
+        print(f"Worst fitness: {min(self.fitnessScores):.3f}")
+        
+        # Update population and reset counters
         self.population = new_pop[:self.POPULATION_SIZE]
         self.fitnessScores = [0.0] * len(self.population)
         self.currentGeneIndex = 0
         self.gamesPlayedWithCurrentGene = 0
         self.winsWithCurrentGene = 0
-        # Save in clean, readable format
-        with open("./nguyenj25_population.txt", 'w') as f:
-            f.write("# Genetic Algorithm Population\n")
-            f.write("# Format: Each line represents one gene with 12 feature weights\n")
-            f.write("# Features: Food_diff, Queen_health_diff, Drone_diff, Soldier_diff, Worker_diff, Ranged_diff, Offensive_cap, Dist_enemy_queen, Dist_my_queen, Dist_enemy_anthill, Worker_queen_dist, Queen_queen_dist\n")
-            f.write(f"# Population size: {len(self.population)}, Gene length: {len(self.population[0])}\n\n")
-            
-            for i, gene in enumerate(self.population):
-                # Format each gene on one line with clean spacing
-                gene_str = " ".join([f"{weight:8.4f}" for weight in gene])
-                f.write(f"Gene_{i:2d}: {gene_str}\n")
+        self.generation += 1
+        
+        # Update population file
+        self._updatePopulationFile()
     
     ##
     #getPlacement
@@ -189,34 +246,34 @@ class AIPlayer(Player):
             self.myIndex = currentState.whoseTurn
         
         numToPlace = 0
-        if currentState.phase == SETUP_PHASE_1:    #stuff on my side
-            numToPlace = 11
+        if currentState.phase == SETUP_PHASE_1:    # Place on my side (rows 0-3)
+            numToPlace = 11  # 1 anthill + 1 tunnel + 9 grass
             moves = []
             for i in range(0, numToPlace):
                 move = None
                 while move == None:
                     x = random.randint(0, 9)
-                    y = random.randint(0, 3)
+                    y = random.randint(0, 3)  # My side
                     if currentState.board[x][y].constr == None and (x, y) not in moves:
                         move = (x, y)
-                        currentState.board[x][y].constr == True
+                        currentState.board[x][y].constr == True  # Mark as occupied
                 moves.append(move)
             return moves
-        elif currentState.phase == SETUP_PHASE_2:   #stuff on foe's side
-            numToPlace = 2
+        elif currentState.phase == SETUP_PHASE_2:   # Place on enemy side (rows 6-9)
+            numToPlace = 2  # 2 food sources
             moves = []
             for i in range(0, numToPlace):
                 move = None
                 while move == None:
                     x = random.randint(0, 9)
-                    y = random.randint(6, 9)
+                    y = random.randint(6, 9)  # Enemy side
                     if currentState.board[x][y].constr == None and (x, y) not in moves:
                         move = (x, y)
-                        currentState.board[x][y].constr == True
+                        currentState.board[x][y].constr == True  # Mark as occupied
                 moves.append(move)
             return moves
         else:
-            return [(0, 0)]
+            return [(0, 0)]  # Fallback
     
     ##
     # getAttack
@@ -228,629 +285,220 @@ class AIPlayer(Player):
     #   enemyLocation - The Locations of the Enemies that can be attacked (Location[])
     ##
     def getAttack(self, currentState, attackingAnt, enemyLocations):
-        #Attack a random enemy.
+        # Simple random attack selection
         return enemyLocations[random.randint(0, len(enemyLocations) - 1)]
 
     ##
     # registerWin
     #
-    # This agent does'nt learn
+    # Updates fitness scores for genetic algorithm based on game outcomes
+    # Tracks wins per gene and triggers generation advancement when complete
+    #
+    # Parameters:
+    #   hasWon - Boolean indicating if this player won the game
+    #
+    # Return: None (updates fitness scores and generation state)
     ##
     def registerWin(self, hasWon):
-        """Override registerWin for genetic algorithm"""
+        # Update win count and game statistics
         if hasWon:
             self.winsWithCurrentGene += 1
+            self.totalWins += 1
         self.gamesPlayedWithCurrentGene += 1
+        self.totalGamesPlayed += 1
         
+        # Check if current gene evaluation is complete
         if self.gamesPlayedWithCurrentGene >= self.GAMES_PER_GENE:
+            # Calculate fitness as win rate
             fitness = self.winsWithCurrentGene / self.gamesPlayedWithCurrentGene
             self.fitnessScores[self.currentGeneIndex] = fitness
+            
+            # Print gene completion status
+            print(f"Gene {self.currentGeneIndex:2d} completed: {self.winsWithCurrentGene}/{self.gamesPlayedWithCurrentGene} wins (fitness: {fitness:.3f})")
+            
+            # Move to next gene
             self.currentGeneIndex += 1
             self.gamesPlayedWithCurrentGene = 0
             self.winsWithCurrentGene = 0
             
+            # Update population file periodically
+            if self.totalGamesPlayed % 250 == 0:
+                self._updatePopulationFile()
+            
+            # Check if generation is complete
             if self.currentGeneIndex >= len(self.population):
                 self.createNextGeneration()
 
-
-
-    ### HOMEWORK 3 CODE ###
-
-    ##
-    # convertDistanceToMoves
-    # Description: Converts a distance to the number of moves required based on ant type movement rate
-    #
-    # Parameters:
-    #   distance - The distance to travel (float)
-    #   antType - The type of ant (int)
-    #
-    # Return: Number of moves required (int)
-    ##
-    def convertDistanceToMoves(self, distance, antType):
-        # Get movement capabilities
-        speed = UNIT_STATS[antType][MOVEMENT]
-        
-        # Calculate base moves needed
-        baseMoves = distance / speed
-        
-        # Apply strategic rounding (always round up for conservative estimates)
-        tacticalMoves = math.ceil(baseMoves)
-        
-        # Add small penalty for longer distances (realistic movement cost)
-        if tacticalMoves > self.DISTANCE_PENALTY_THRESHOLD:
-            tacticalMoves += self.DISTANCE_PENALTY_BONUS
-        
-        return tacticalMoves
-
-    ##
-    # calculateFoodHeuristic
-    # Description: Calculates the heuristic value for food collection strategy
-    #
-    # Parameters:
-    #   parentState - The previous game state (GameState)
-    #   currentState - The current game state to evaluate (GameState)
-    #
-    # Return: Heuristic cost for food collection strategy
-    ##
-    def calculateFoodHeuristic(self, parentState, currentState):
-        # Early exit if goal achieved
-        pid = self.myIndex if self.myIndex is not None else currentState.whoseTurn
-        inv = currentState.inventories[pid]
-        deficit = FOOD_GOAL - inv.foodCount
-        if deficit == 0:
-            return 0
-        
-        # Initialize cost components
-        cost = self.FOOD_BASE_COST
-        bonus = 0
-        extra = 0
-        
-        # Get workers and tunnel
-        workers = getAntList(currentState, pid, (WORKER,))
-        tunnel = getConstrList(currentState, pid, (TUNNEL,))[0]
-        
-        # Check worker count
-        if len(workers) == 0 or len(workers) > 2:
-            return self.FOOD_WORKER_PENALTY
-        
-        bonus = self.FOOD_WORKER_BONUS
-        
-        # Process workers
-        for worker in workers:
-            if worker.carrying:
-                dist = approxDist(worker.coords, tunnel.coords)
-                cost += self.convertDistanceToMoves(dist, WORKER)
-                deficit -= 1
-            else:
-                foods = self._getFoods(currentState)
-                if len(foods) >= 2:
-                    path = self._getPath(worker, foods, tunnel)
-                    cost += self.convertDistanceToMoves(path, WORKER)
-                    deficit -= 1
-        
-        # Calculate remaining food cost
-        if deficit > 0:
-            foods = self._getFoods(currentState)
-            if len(foods) >= 2:
-                extra = self._getExtraCost(foods, tunnel, deficit)
-        
-        cost -= bonus
-        cost += extra
-        
-        return cost
-    
-    def _getFoods(self, currentState):
-        """Get food sources in player territory"""
-        foods = getConstrList(currentState, None, (FOOD,))
-        myFoods = []
-        for food in foods:
-            if food.coords[1] <= 3:
-                myFoods.append(food)
-        return myFoods
-    
-    def _getPath(self, worker, foods, tunnel):
-        """Calculate optimal foraging path"""
-        d1 = approxDist(worker.coords, foods[0].coords)
-        d2 = approxDist(worker.coords, foods[1].coords)
-        
-        if d1 < d2:
-            return d1 + approxDist(foods[0].coords, tunnel.coords)
-        else:
-            return d2 + approxDist(foods[1].coords, tunnel.coords)
-    
-    def _getExtraCost(self, foods, tunnel, deficit):
-        """Calculate remaining food cost"""
-        dist = min(
-            approxDist(foods[0].coords, tunnel.coords),
-            approxDist(foods[1].coords, tunnel.coords)
-        )
-        return self.FOOD_DEFICIT_MULTIPLIER * deficit * self.convertDistanceToMoves(dist, WORKER)
-
-    ##
-    # calculateAttackHeuristic
-    # Description: Calculates the heuristic value for  strategy focusing on queen elimination
-    #
-    # Parameters:
-    #   parentState - The previous game state (GameState)
-    #   currentState - The current game state to evaluate (GameState)
-    #
-    # Return: Heuristic cost for attack strategy
-    ##
-    def calculateAttackHeuristic(self, parentState, currentState):
-        # Initialize attack cost
-        cost = self.ATTACK_BASE_EVALUATION
-        bonus = 0
-        moveCost = 0
-        
-        # Get player info
-        myId = self.myIndex if self.myIndex is not None else currentState.whoseTurn
-        enemyId = 1 - myId
-        
-        # Check if enemy queen exists
-        enemyQueens = getAntList(currentState, enemyId, (QUEEN,))
-        if not enemyQueens:
-            return 0
-        
-        # Analyze military units
-        units = getAntList(currentState, myId)
-        comp = self._analyzeUnits(units)
-        
-        # Validate strategy
-        if not self._validateStrategy(comp):
-            return self.MILITARY_UNIT_PENALTY
-        
-        # Calculate bonuses
-        bonus = self._getBonuses(comp, currentState, enemyId)
-        
-        # Calculate movement costs with anti-looping logic
-        moveCost = self._getMoveCosts(units, currentState, enemyId)
-        
-        # Add anti-looping penalty for units that might be stuck
-        loopPenalty = self._calculateLoopPenalty(parentState, currentState, units)
-        
-        cost -= bonus
-        cost += moveCost
-        cost += loopPenalty
-        
-        return cost
-    
-    def _calculateLoopPenalty(self, parentState, currentState, units):
-        """Calculate penalty for units that might be stuck in loops"""
-        penalty = 0
-        
-        # Check if units are moving back and forth
-        for unit in units:
-            if unit.type in [DRONE, SOLDIER, R_SOLDIER]:
-                # Check if unit moved to a position it was at before
-                if parentState:
-                    parentUnits = getAntList(parentState, self.myIndex if self.myIndex is not None else currentState.whoseTurn)
-                    for parentUnit in parentUnits:
-                        if parentUnit.type == unit.type:
-                            # If unit is back where it was 2 turns ago, add penalty
-                            if unit.coords == parentUnit.coords:
-                                penalty += 50  # Small penalty for staying in same spot
-                                break
-        
-        # Add penalty for units that are far from any target
-        enemyQueens = getAntList(currentState, 1 - (self.myIndex if self.myIndex is not None else currentState.whoseTurn), (QUEEN,))
-        enemyAnthill = getConstrList(currentState, 1 - (self.myIndex if self.myIndex is not None else currentState.whoseTurn), (ANTHILL,))[0]
-        
-        for unit in units:
-            if unit.type in [DRONE, SOLDIER, R_SOLDIER]:
-                # Calculate distance to nearest target
-                if enemyQueens:
-                    distToQueen = approxDist(unit.coords, enemyQueens[0].coords)
-                    distToAnthill = approxDist(unit.coords, enemyAnthill.coords)
-                    minDist = min(distToQueen, distToAnthill)
-                    
-                    # If unit is very far from targets, add penalty
-                    if minDist > 8:  # Arbitrary threshold
-                        penalty += 30
-        
-        return penalty
-    
-    def _analyzeUnits(self, units):
-        """Analyze military unit composition"""
-        comp = {'soldiers': 0, 'ranged': 0, 'drones': 0}
-        
-        for unit in units:
-            if unit.type == SOLDIER:
-                comp['soldiers'] += 1
-            elif unit.type == R_SOLDIER:
-                comp['ranged'] += 1
-            elif unit.type == DRONE:
-                comp['drones'] += 1
-        
-        return comp
-    
-    def _validateStrategy(self, comp):
-        """Validate military strategy"""
-        if comp['soldiers'] > 0:
-            return False
-        if comp['drones'] > 1:
-            return False
-        if comp['ranged'] > 1:
-            return False
-        return True
-    
-    def _getBonuses(self, comp, currentState, enemyId):
-        """Calculate tactical bonuses"""
-        bonus = 0
-        
-        if comp['drones'] > 0:
-            bonus += self.DRONE_BONUS
-        if comp['ranged'] > 0:
-            bonus += self.RANGED_SOLDIER_BONUS
-        
-        # Bonus for eliminating enemy workers
-        enemyWorkers = getAntList(currentState, enemyId, (WORKER,))
-        if not enemyWorkers:
-            bonus += self.WORKER_ELIMINATION_BONUS
-        
-        return bonus
-    
-    def _getMoveCosts(self, units, currentState, enemyId):
-        """Calculate movement costs with improved targeting"""
-        cost = 0
-        
-        # Get enemy targets
-        enemyQueens = getAntList(currentState, enemyId, (QUEEN,))
-        enemyAnthill = getConstrList(currentState, enemyId, (ANTHILL,))[0]
-        enemyTunnel = getConstrList(currentState, enemyId, (TUNNEL,))[0]
-        enemyWorkers = getAntList(currentState, enemyId, (WORKER,))
-        
-        # Calculate costs for each unit
-        for unit in units:
-            if unit.type == DRONE:
-                # Drone always targets the queen
-                if enemyQueens:
-                    dist = approxDist(unit.coords, enemyQueens[0].coords)
-                    cost += self.convertDistanceToMoves(dist, DRONE)
-                else:
-                    # If no queen, target anthill
-                    dist = approxDist(unit.coords, enemyAnthill.coords)
-                    cost += self.convertDistanceToMoves(dist, DRONE)
-            elif unit.type == SOLDIER:
-                # Regular soldier targets anthill
-                dist = approxDist(unit.coords, enemyAnthill.coords)
-                cost += self.convertDistanceToMoves(dist, SOLDIER)
-            elif unit.type == R_SOLDIER:
-                # Ranged soldier targets tunnel if workers exist, otherwise queen
-                if enemyWorkers:
-                    dist = approxDist(unit.coords, enemyTunnel.coords)
-                elif enemyQueens:
-                    dist = approxDist(unit.coords, enemyQueens[0].coords)
-                else:
-                    dist = approxDist(unit.coords, enemyAnthill.coords)
-                cost += self.convertDistanceToMoves(dist, R_SOLDIER)
-        
-        return cost
-    
-    ##
-    # calculateQueenHeuristic
-    # Description: Calculates the heuristic value for queen positioning strategy
-    #
-    # Parameters:
-    #   parentState - The previous game state (GameState)
-    #   currentState - The current game state to evaluate (GameState)
-    #
-    # Return: Heuristic cost for queen positioning strategy
-    ##
-    def calculateQueenHeuristic(self, parentState, currentState):
-        # Get player info
-        myId = self.myIndex if self.myIndex is not None else currentState.whoseTurn
-        infra = self._getInfra(currentState, myId)
-        
-        # Check if queen exists
-        if not infra['queen']:
-            return self.QUEEN_MISSING_PENALTY
-        
-        queen = infra['queen']
-        
-        # Check for blocking
-        penalty = self._checkBlocking(queen, infra)
-        if penalty > 0:
-            return penalty
-        
-        # Calculate positioning cost
-        dist = approxDist(queen.coords, self.QUEEN_IDEAL_POSITION)
-        return self.convertDistanceToMoves(dist, QUEEN)
-    
-    def _getInfra(self, currentState, playerId):
-        """Get player infrastructure"""
-        infra = {
-            'anthill': getConstrList(currentState, playerId, (ANTHILL,))[0],
-            'tunnel': getConstrList(currentState, playerId, (TUNNEL,))[0],
-            'queen': None,
-            'foods': []
-        }
-        
-        # Get queen
-        queens = getAntList(currentState, playerId, (QUEEN,))
-        if queens:
-            infra['queen'] = queens[0]
-        
-        # Get food sources
-        foods = getConstrList(currentState, None, (FOOD,))
-        for food in foods:
-            if food.coords[1] <= 3:
-                infra['foods'].append(food)
-        
-        return infra
-    
-    def _checkBlocking(self, queen, infra):
-        """Check for blocking situations"""
-        pos = queen.coords
-        
-        # Check infrastructure blocking
-        if pos == infra['anthill'].coords:
-            return self.QUEEN_BLOCKING_PENALTY
-        if pos == infra['tunnel'].coords:
-            return self.QUEEN_BLOCKING_PENALTY
-        
-        # Check food blocking
-        for food in infra['foods']:
-            if pos == food.coords:
-                return self.QUEEN_BLOCKING_PENALTY
-        
-        return 0
-
-    ##
-    # computeHeuristicValue
-    # Description: Computes the total heuristic value by evaluating different strategic components
-    #
-    # Parameters:
-    #   parentState - The previous game state (GameState)
-    #   currentState - The current game state to evaluate (GameState)
-    #
-    # Return: Combined heuristic value from all strategic components
-    ##
-    def computeHeuristicValue(self, parentState, currentState):
-        # Calculate all components
-        food = self.calculateFoodHeuristic(parentState, currentState)
-        attack = self.calculateAttackHeuristic(parentState, currentState)
-        queen = self.calculateQueenHeuristic(parentState, currentState)
-        
-        return food + attack + queen
-
     ##
     # calculateStateUtility
-    # Description: Calculates the utility value for a given game state by converting heuristic to utility
+    #
+    # Calculates utility value for a game state using genetic algorithm weights
+    # Extracts 12 features and applies current gene weights to compute utility
     #
     # Parameters:
-    #   parentState - The previous game state (GameState)
-    #   currentState - The current game state to evaluate (GameState)
+    #   currentState - The game state to evaluate (GameState)
     #
-    # Return: A utility score representing state favorability
+    # Return: Utility score representing state favorability (float)
     ##
-    def calculateStateUtility(self, parentState, currentState):
-        """Use genetic algorithm utility instead of heuristic"""
+    def calculateStateUtility(self, currentState):
         if not self.population or self.currentGeneIndex >= len(self.population):
             return 0.0
         
-        # Simple feature extraction (14 features)
         myId = self.myIndex if self.myIndex is not None else currentState.whoseTurn
         enemyId = 1 - myId
         myInv = currentState.inventories[myId]
         enemyInv = currentState.inventories[enemyId]
         
         features = [
-            myInv.foodCount - enemyInv.foodCount,  # 0: Food difference
-            (myInv.getQueen().health if myInv.getQueen() else 0) - (enemyInv.getQueen().health if enemyInv.getQueen() else 0),  # 1: Queen health diff
-            len(getAntList(currentState, myId, (DRONE,))) - len(getAntList(currentState, enemyId, (DRONE,))),  # 2: Drone diff
-            len(getAntList(currentState, myId, (SOLDIER,))) - len(getAntList(currentState, enemyId, (SOLDIER,))),  # 3: Soldier diff
-            len(getAntList(currentState, myId, (WORKER,))) - len(getAntList(currentState, enemyId, (WORKER,))),  # 4: Worker diff
-            len(getAntList(currentState, myId, (R_SOLDIER,))) - len(getAntList(currentState, enemyId, (R_SOLDIER,))),  # 5: Ranged diff
-            1 if len(getAntList(currentState, myId, (DRONE, SOLDIER, R_SOLDIER))) > len(getAntList(currentState, enemyId, (DRONE, SOLDIER, R_SOLDIER))) else 0,  # 6: Offensive capability
+            myInv.foodCount - enemyInv.foodCount,  # 0: Food advantage
+            (myInv.getQueen().health if myInv.getQueen() else 0) - (enemyInv.getQueen().health if enemyInv.getQueen() else 0),  # 1: Queen health advantage
+            len(getAntList(currentState, myId, (DRONE,))) - len(getAntList(currentState, enemyId, (DRONE,))),  # 2: Drone advantage
+            len(getAntList(currentState, myId, (SOLDIER,))) - len(getAntList(currentState, enemyId, (SOLDIER,))),  # 3: Soldier advantage
+            len(getAntList(currentState, myId, (WORKER,))) - len(getAntList(currentState, enemyId, (WORKER,))),  # 4: Worker advantage
+            len(getAntList(currentState, myId, (R_SOLDIER,))) - len(getAntList(currentState, enemyId, (R_SOLDIER,))),  # 5: Ranged advantage
+            1 if len(getAntList(currentState, myId, (DRONE, SOLDIER, R_SOLDIER))) > len(getAntList(currentState, enemyId, (DRONE, SOLDIER, R_SOLDIER))) else 0,  # 6: Overall military advantage
             self._calculateAvgDistanceToEnemyQueen(currentState, myId, enemyId),  # 7: Distance to enemy queen
-            self._calculateAvgDistanceToMyQueen(currentState, myId, enemyId),  # 8: Distance to my queen
+            self._calculateAvgDistanceToMyQueen(currentState, myId, enemyId),  # 8: Enemy distance to my queen
             self._calculateAvgDistanceToEnemyAnthill(currentState, myId, enemyId),  # 9: Distance to enemy anthill
             self._calculateAvgWorkerToQueenDistance(currentState, myId),  # 10: Irrelevant feature
             self._calculateQueenToQueenDistance(currentState, myId, enemyId)  # 11: Irrelevant feature
         ]
         
-        # Calculate utility using current gene weights
         current_gene = self.population[self.currentGeneIndex]
         utility = sum(current_gene[i] * features[i] for i in range(len(features)))
         return utility
     
-    # Helper methods for distance calculations
+    ##
+    # _calculateAvgDistanceToEnemyQueen
+    #
+    # Calculates average distance from my offensive ants to enemy queen
+    # Used as feature for genetic algorithm utility calculation
+    #
+    # Parameters:
+    #   currentState - Current game state (GameState)
+    #   myId - My player ID (int)
+    #   enemyId - Enemy player ID (int)
+    #
+    # Return: Average distance (float), 0.0 if no ants or queen
+    ##
     def _calculateAvgDistanceToEnemyQueen(self, currentState, myId, enemyId):
-        """Calculate average distance from my offensive ants to enemy queen"""
+        # Get my offensive units and enemy queen
         myOffensiveAnts = getAntList(currentState, myId, (DRONE, SOLDIER, R_SOLDIER))
         enemyQueens = getAntList(currentState, enemyId, (QUEEN,))
         
+        # Return 0 if no units or queen
         if not myOffensiveAnts or not enemyQueens:
             return 0.0
         
+        # Calculate average distance to enemy queen
         total_distance = sum(approxDist(ant.coords, enemyQueens[0].coords) for ant in myOffensiveAnts)
         return total_distance / len(myOffensiveAnts)
     
+    ##
+    # _calculateAvgDistanceToMyQueen
+    #
+    # Calculates average distance from enemy offensive ants to my queen
+    # Used as feature for genetic algorithm utility calculation
+    #
+    # Parameters:
+    #   currentState - Current game state (GameState)
+    #   myId - My player ID (int)
+    #   enemyId - Enemy player ID (int)
+    #
+    # Return: Average distance (float), 0.0 if no ants or queen
+    ##
     def _calculateAvgDistanceToMyQueen(self, currentState, myId, enemyId):
-        """Calculate average distance from enemy offensive ants to my queen"""
+        # Get enemy offensive units and my queen
         enemyOffensiveAnts = getAntList(currentState, enemyId, (DRONE, SOLDIER, R_SOLDIER))
         myQueens = getAntList(currentState, myId, (QUEEN,))
         
+        # Return 0 if no units or queen
         if not enemyOffensiveAnts or not myQueens:
             return 0.0
         
+        # Calculate average distance to my queen
         total_distance = sum(approxDist(ant.coords, myQueens[0].coords) for ant in enemyOffensiveAnts)
         return total_distance / len(enemyOffensiveAnts)
     
+    ##
+    # _calculateAvgDistanceToEnemyAnthill
+    #
+    # Calculates average distance from my offensive ants to enemy anthill
+    # Used as feature for genetic algorithm utility calculation
+    #
+    # Parameters:
+    #   currentState - Current game state (GameState)
+    #   myId - My player ID (int)
+    #   enemyId - Enemy player ID (int)
+    #
+    # Return: Average distance (float), 0.0 if no ants or anthill
+    ##
     def _calculateAvgDistanceToEnemyAnthill(self, currentState, myId, enemyId):
-        """Calculate average distance from my offensive ants to enemy anthill"""
+        # Get my offensive units and enemy anthill
         myOffensiveAnts = getAntList(currentState, myId, (DRONE, SOLDIER, R_SOLDIER))
         enemyAnthills = getConstrList(currentState, enemyId, (ANTHILL,))
         
+        # Return 0 if no units or anthill
         if not myOffensiveAnts or not enemyAnthills:
             return 0.0
         
+        # Calculate average distance to enemy anthill
         total_distance = sum(approxDist(ant.coords, enemyAnthills[0].coords) for ant in myOffensiveAnts)
         return total_distance / len(myOffensiveAnts)
     
+    ##
+    # _calculateAvgWorkerToQueenDistance
+    #
+    # Calculates average distance from my workers to my queen
+    # Used as feature for genetic algorithm utility calculation
+    #
+    # Parameters:
+    #   currentState - Current game state (GameState)
+    #   myId - My player ID (int)
+    #
+    # Return: Average distance (float), 0.0 if no workers or queen
+    ##
     def _calculateAvgWorkerToQueenDistance(self, currentState, myId):
-        """Calculate average distance from my workers to my queen (irrelevant feature)"""
+        # Get my workers and queen
         myWorkers = getAntList(currentState, myId, (WORKER,))
         myQueens = getAntList(currentState, myId, (QUEEN,))
         
+        # Return 0 if no workers or queen
         if not myWorkers or not myQueens:
             return 0.0
         
+        # Calculate average distance from workers to queen
         total_distance = sum(approxDist(worker.coords, myQueens[0].coords) for worker in myWorkers)
         return total_distance / len(myWorkers)
     
+    ##
+    # _calculateQueenToQueenDistance
+    #
+    # Calculates distance between my queen and enemy queen
+    # Used as feature for genetic algorithm utility calculation
+    #
+    # Parameters:
+    #   currentState - Current game state (GameState)
+    #   myId - My player ID (int)
+    #   enemyId - Enemy player ID (int)
+    #
+    # Return: Distance (float), 0.0 if no queens
+    ##
     def _calculateQueenToQueenDistance(self, currentState, myId, enemyId):
-        """Calculate distance between my queen and enemy queen (irrelevant feature)"""
+        # Get both queens
         myQueens = getAntList(currentState, myId, (QUEEN,))
         enemyQueens = getAntList(currentState, enemyId, (QUEEN,))
         
+        # Return 0 if either queen is missing
         if not myQueens or not enemyQueens:
             return 0.0
         
+        # Calculate distance between queens
         return approxDist(myQueens[0].coords, enemyQueens[0].coords)
 
     ##
-    # buildSearchNode
-    # Description: Creates a search node with move, state, and utility information
-    #
-    # Parameters:
-    #   move - The move that led to this state (Move)
-    #   parentNode - The parent search node (dict)
-    #   currentState - The current game state (GameState)
-    #
-    # Return: Dictionary representing a search node
-    ##
-    def buildSearchNode(self, move, parentNode, currentState):
-        # Initialize node data structure
-        nodeData = {}
-        
-        # Set the move that led to this state
-        nodeData['move'] = move
-        
-        # Determine depth based on parent relationship
-        if parentNode is None:
-            nodeData['depth'] = 0
-        else:
-            nodeData['depth'] = parentNode['depth'] + 1
-        
-        # Store the current game state
-        nodeData['currentState'] = currentState
-        
-        # Store reference to parent for backtracking
-        nodeData['parentNode'] = parentNode
-        
-        # Calculate utility value for this node
-        if parentNode is not None:
-            # Get the previous state for comparison
-            previousState = parentNode['currentState']
-            # Compute utility based on state transition
-            nodeData['utility'] = self.calculateStateUtility(previousState, currentState)
-        else:
-            # Root node has no utility calculation
-            nodeData['utility'] = 0
-        
-        return nodeData
-
-    ##
-    # generateChildNodes
-    # Description: Generates all possible child nodes from the current node by exploring legal moves
-    #
-    # Parameters:
-    #   currentNode - The current search node (dict)
-    #
-    # Return: List of child nodes representing possible moves
-    ##
-    def generateChildNodes(self, currentNode):
-        # Extract the current game state
-        currentGameState = currentNode['currentState']
-        
-        # Obtain all possible legal moves
-        legalMoves = listAllLegalMoves(currentGameState)
-        
-        # Initialize collection for child nodes
-        childNodeCollection = []
-        
-        # Process each legal move to create child nodes
-        for move in legalMoves:
-            # Simulate the move to get next state
-            nextGameState = getNextStateAdversarial(currentGameState, move)
-            
-            # Create a new search node for this move
-            newChildNode = self.buildSearchNode(move, currentNode, nextGameState)
-            
-            # Add the new node to our collection
-            childNodeCollection.append(newChildNode)
-
-        # Return the complete set of child nodes
-        return childNodeCollection
-
-    ##
-    # performMinimaxSearch
-    # Description: Performs minimax search with alpha-beta pruning to find optimal move
-    #
-    # Parameters:
-    #   currentNode - The current search node (dict)
-    #   searchDepth - Maximum depth to search (int)
-    #   pruningRatio - Ratio of nodes to consider for pruning (float)
-    #   alpha - Alpha value for pruning (float)
-    #   beta - Beta value for pruning (float)
-    #
-    # Return: Tuple of (best value, best child node)
-    ##
-    def performMinimaxSearch(self, currentNode, searchDepth, pruningRatio, alpha, beta):
-        state = currentNode['currentState']
-
-        # Terminal condition
-        if currentNode['depth'] >= searchDepth:
-            return currentNode['utility'], None
-        
-        # Generate children
-        children = self.generateChildNodes(currentNode)
-        if not children:
-            return currentNode['utility'], None
-            
-        # Sort and prune
-        children.sort(key=lambda node: node['utility'])
-        total = len(children)
-        limit = max(self.MIN_NODE_LIMIT, math.ceil(total * pruningRatio))
-        
-        # Determine player type
-        # Decide maximizing/minimizing relative to our in-game index
-        isMax = (state.whoseTurn == (self.myIndex if self.myIndex is not None else state.whoseTurn))
-        
-        # Select candidates
-        if isMax:
-            candidates = children[-limit:]
-            bestVal = -float('inf')
-        else:
-            candidates = children[:limit]
-            bestVal = float('inf')
-            
-        bestNode = None
-
-        # Evaluate candidates
-        for child in candidates:
-            val, _ = self.performMinimaxSearch(child, searchDepth, pruningRatio, alpha, beta)
-
-            if isMax:
-                if val > bestVal:
-                    bestVal = val
-                    bestNode = child
-                    alpha = max(alpha, bestVal)
-            else:
-                if val < bestVal:
-                    bestVal = val
-                    bestNode = child
-                    beta = min(beta, bestVal)
-
-            if beta <= alpha:
-                break
-        
-        return bestVal, bestNode
-
-    ##
     # getMove
-    # Description: Gets the next move from the Player using minimax search with alpha-beta pruning
+    # Description: Gets the next move by picking the node with the highest evaluation
     #
     # Parameters:
     #   currentState - The state of the current game waiting for the player's move (GameState)
@@ -858,38 +506,50 @@ class AIPlayer(Player):
     # Return: The Move to be made
     ##
     def getMove(self, currentState):
-        # Capture our in-game index once
-        if self.myIndex is None:
-            self.myIndex = currentState.whoseTurn
-
-        # Create root node
-        root = self.buildSearchNode(move=None, parentNode=None, currentState=currentState)
+        moves = listAllLegalMoves(currentState)
+        nodes = []
         
-        # Perform minimax search
-        val, bestNode = self.performMinimaxSearch(
-            currentNode=root,
-            searchDepth=self.SEARCH_DEPTH,
-            pruningRatio=self.PRUNING_RATIO,
-            alpha=-float('inf'),
-            beta=float('inf')
-        )
+        for move in moves:
+            nextState = getNextState(currentState, move)
+            utilityScore = self.calculateStateUtility(nextState)
+            node = self.node(move, nextState, utilityScore, None)
+            nodes.append(node)
+        
+        best = self.bestMove(nodes)
+        return best["move"]
 
-        return bestNode['move']
-
-
-def unitTest() -> None:
-    test_state: GameState = GameState.getBasicState()
-    test_player: AIPlayer = AIPlayer(0)
+    ##
+    # node
+    #
+    # Creates a node representation for move evaluation
+    # Combines utility score with depth for move selection
+    #
+    # Parameters:
+    #   move - The move being evaluated (Move)
+    #   state - Resulting game state (GameState)
+    #   utility - Utility score for the state (float)
+    #   parent - Parent node (dict or None)
+    #   depth - Depth in search tree (int, default 1)
+    #
+    # Return: Node dictionary with move, state, evaluation, and parent
+    ##
+    def node(self, move, state, utility, parent, depth=1):
+        return {
+            "move": move,
+            "state": state,
+            "evaluation": (utility + depth),  # Add depth bonus to utility
+            "parent": parent
+        }
     
-    move: Move = test_player.getMove(test_state)
-    next_state: GameState = getNextState(test_state, move)
-    # utility_value: float = test_player.utility(test_state, next_state)
-
-    if type(move) is not Move:
-        print("getMove() test failed; invalid move returned")
-
-    # if type(utility_value) is not int:
-    #     print(f"utility() failed; value should be an integer: {utility_value}")
-
-if __name__ == "__main__":
-    unitTest()
+    ##
+    # bestMove
+    #
+    # Selects the node with the highest evaluation score
+    #
+    # Parameters:
+    #   nodes - List of node dictionaries
+    #
+    # Return: Node with highest evaluation score
+    ##
+    def bestMove(self, nodes):
+        return max(nodes, key=lambda x: x["evaluation"])
